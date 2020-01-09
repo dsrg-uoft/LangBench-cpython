@@ -191,6 +191,27 @@ static size_t opcache_global_misses = 0;
 #include "pythread.h"
 #include "ceval_gil.h"
 
+static uint64_t binary_subscr_time = 0;
+static uint64_t binary_subscr_count = 0;
+static inline uint64_t
+rdtscp(void) {
+    uint64_t lo, hi;
+    __asm__ volatile ("rdtscp"
+            : /* outputs */ "=a" (lo), "=d" (hi)
+            : /* no inputs */
+            : /* clobbers */ "%rcx");
+    return lo | (hi << 32);
+}
+
+static inline uint64_t
+rdpmc(void) {
+    uint64_t lo, hi;
+    __asm__ volatile ("cpuid" : : : "%rax","%rbx","%rcx","%rdx");
+    uint32_t code = 1 << 30;
+    __asm__ volatile ("rdpmc" : "=a" (lo), "=d" (hi) : "c" (code));
+    return lo | (hi << 32);
+}
+
 int
 PyEval_ThreadsInitialized(void)
 {
@@ -715,12 +736,14 @@ static int unpack_iterable(PyThreadState *, PyObject *, int, int, PyObject **);
 PyObject *
 PyEval_EvalCode(PyObject *co, PyObject *globals, PyObject *locals)
 {
-    return PyEval_EvalCodeEx(co,
+    PyObject *tmp = PyEval_EvalCodeEx(co,
                       globals, locals,
                       (PyObject **)NULL, 0,
                       (PyObject **)NULL, 0,
                       (PyObject **)NULL, 0,
                       NULL, NULL);
+    printf("binary_subscr | time: %lu count %lu %.3f\n", binary_subscr_time, binary_subscr_count, (double)binary_subscr_time / binary_subscr_count);
+    return tmp;
 }
 
 
@@ -867,6 +890,22 @@ _PyEval_EvalFrameDefault(PyFrameObject *f, int throwflag)
     { \
         if (!_Py_atomic_load_relaxed(eval_breaker)) { \
             FAST_DISPATCH(); \
+        } \
+        continue; \
+    }
+
+#define TIME_DISPATCH() \
+    { \
+        if (!_Py_atomic_load_relaxed(eval_breaker)) { \
+            if (!_Py_TracingPossible(ceval) && !PyDTrace_LINE_ENABLED()) { \
+                f->f_lasti = INSTR_OFFSET(); \
+                NEXTOPARG(); \
+                uint64_t t1 = rdpmc(); \
+                binary_subscr_time += t1 - t0; \
+                binary_subscr_count++; \
+                goto *opcode_targets[opcode]; \
+            } \
+            goto fast_next_opcode; \
         } \
         continue; \
     }
@@ -1579,6 +1618,7 @@ main_loop:
         }
 
         case TARGET(BINARY_SUBSCR): {
+            uint64_t t0 = rdpmc();
             PyObject *sub = POP();
             PyObject *container = TOP();
             PyObject *res = PyObject_GetItem(container, sub);
@@ -1587,7 +1627,9 @@ main_loop:
             SET_TOP(res);
             if (res == NULL)
                 goto error;
-            DISPATCH();
+            //DISPATCH();
+            TIME_DISPATCH();
+            //FAST_DISPATCH();
         }
 
         case TARGET(BINARY_LSHIFT): {
