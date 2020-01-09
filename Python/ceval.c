@@ -900,7 +900,7 @@ _PyEval_EvalFrameDefault(PyFrameObject *f, int throwflag)
             if (!_Py_TracingPossible(ceval) && !PyDTrace_LINE_ENABLED()) { \
                 f->f_lasti = INSTR_OFFSET(); \
                 NEXTOPARG(); \
-                uint64_t t1 = rdpmc(); \
+                uint64_t t1 = rdtscp(); \
                 binary_subscr_time += t1 - t0; \
                 binary_subscr_count++; \
                 goto *opcode_targets[opcode]; \
@@ -1618,7 +1618,7 @@ main_loop:
         }
 
         case TARGET(BINARY_SUBSCR): {
-            uint64_t t0 = rdpmc();
+            uint64_t t0 = rdtscp();
             PyObject *sub = POP();
             PyObject *container = TOP();
             PyObject *res = PyObject_GetItem(container, sub);
