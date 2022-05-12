@@ -4,4 +4,4 @@ Build instructions are same as CPython.
 See README.rst for original CPython README.
 
 ## Enabling rdpmc
-sudo sh -c 'echo 2 > /sys/bus/event_source/devices/cpu/rdpmc'
+`sudo sh -c 'echo 2 > /sys/bus/event_source/devices/cpu/rdpmc'`
